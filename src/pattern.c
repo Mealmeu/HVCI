@@ -12,11 +12,13 @@ ULONGLONG ScanPattern(ULONG_PTR Base, ULONG Size, PCHAR Pattern, PCHAR Mask) {
 
     for (SIZE_T i = 0; i < limit; i++) {
         BOOLEAN matched = TRUE;
+        BOOLEAN faulted = FALSE;
 
         for (SIZE_T j = 0; j < maskLen; j++) {
             UCHAR current;
             if (!SafeReadByte(Base + i + j, &current)) {
                 matched = FALSE;
+                faulted = TRUE;
                 break;
             }
             if (Mask[j] != '?' && Pattern[j] != (CHAR)current) {
@@ -25,9 +27,8 @@ ULONGLONG ScanPattern(ULONG_PTR Base, ULONG Size, PCHAR Pattern, PCHAR Mask) {
             }
         }
 
-        if (matched) {
-            return (ULONGLONG)(Base + i);
-        }
+        if (faulted) break;
+        if (matched) return (ULONGLONG)(Base + i);
     }
 
     return 0;

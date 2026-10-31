@@ -43,6 +43,7 @@ BOOLEAN SafeReadByte(ULONGLONG Address, PUCHAR Out) {
 NTSTATUS SafeWriteByte(ULONGLONG Address, UCHAR Value) {
     PMDL  mdl;
     PVOID mapped;
+    ULONG pageOffset = (ULONG)((ULONG_PTR)Address & (PAGE_SIZE - 1));
 
     mdl = IoAllocateMdl((PVOID)(ULONG_PTR)Address, sizeof(UCHAR), FALSE, FALSE, NULL);
     if (!mdl) {
@@ -56,37 +57,20 @@ NTSTATUS SafeWriteByte(ULONGLONG Address, UCHAR Value) {
         return STATUS_ACCESS_VIOLATION;
     }
 
-    mapped = MmMapLockedPagesSpecifyCache(mdl, KernelMode, MmNonCached, NULL, FALSE, NormalPagePriority);
+    // MmMapLockedPagesSpecifyCache returns a page-aligned VA; add pageOffset to reach the target byte.
+    // MdlMappingNoExecute ensures the new mapping carries no execute permission.
+    mapped = MmMapLockedPagesSpecifyCache(
+        mdl, KernelMode, MmNonCached, NULL, FALSE,
+        NormalPagePriority | MdlMappingNoExecute
+    );
     if (!mapped) {
         MmUnlockPages(mdl);
         IoFreeMdl(mdl);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
-    PMDL writeMdl = IoAllocateMdl(mapped, sizeof(UCHAR), FALSE, FALSE, NULL);
-    if (!writeMdl) {
-        MmUnmapLockedPages(mapped, mdl);
-        MmUnlockPages(mdl);
-        IoFreeMdl(mdl);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
+    *(volatile UCHAR *)((ULONG_PTR)mapped + pageOffset) = Value;
 
-    MmBuildMdlForNonPagedPool(writeMdl);
-    writeMdl->MdlFlags |= MDL_MAPPED_TO_SYSTEM_VA;
-
-    PVOID writeAddr = MmMapLockedPagesSpecifyCache(writeMdl, KernelMode, MmNonCached, NULL, FALSE, NormalPagePriority);
-    if (!writeAddr) {
-        IoFreeMdl(writeMdl);
-        MmUnmapLockedPages(mapped, mdl);
-        MmUnlockPages(mdl);
-        IoFreeMdl(mdl);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    *(volatile UCHAR *)writeAddr = Value;
-
-    MmUnmapLockedPages(writeAddr, writeMdl);
-    IoFreeMdl(writeMdl);
     MmUnmapLockedPages(mapped, mdl);
     MmUnlockPages(mdl);
     IoFreeMdl(mdl);
