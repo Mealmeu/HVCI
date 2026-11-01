@@ -97,14 +97,29 @@ static NTSTATUS BuildPatchContext(
 }
 
 static NTSTATUS ApplyPatches(PPATCH_CONTEXT ctx) {
+    UCHAR origBytes[8] = { 0 };
+
+    // Phase 1: snapshot all target bytes before touching anything.
     for (ULONG i = 0; i < ctx->PatchCount; i++) {
-        UCHAR current;
-        if (!SafeReadByte(ctx->PatchAddresses[i], &current)) return STATUS_ACCESS_VIOLATION;
-        if (current == OPCODE_JNZ_SHORT) continue;
+        if (!SafeReadByte(ctx->PatchAddresses[i], &origBytes[i]))
+            return STATUS_ACCESS_VIOLATION;
+    }
+
+    // Phase 2: apply. On write failure, revert every byte we already changed.
+    for (ULONG i = 0; i < ctx->PatchCount; i++) {
+        if (origBytes[i] == OPCODE_JNZ_SHORT)
+            continue;
 
         NTSTATUS status = SafeWriteByte(ctx->PatchAddresses[i], OPCODE_JNZ_SHORT);
-        if (!NT_SUCCESS(status)) return status;
+        if (!NT_SUCCESS(status)) {
+            for (ULONG j = 0; j < i; j++) {
+                if (origBytes[j] != OPCODE_JNZ_SHORT)
+                    SafeWriteByte(ctx->PatchAddresses[j], origBytes[j]);
+            }
+            return status;
+        }
     }
+
     return STATUS_SUCCESS;
 }
 
